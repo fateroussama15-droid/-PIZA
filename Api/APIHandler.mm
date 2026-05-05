@@ -389,22 +389,12 @@ static NSString *_encryptedOffsetsEndpoint = nil;
         NSDictionary *secConfig = json[@"security"];
         if (!secConfig || ![secConfig isKindOfClass:[NSDictionary class]]) return;
 
-        SecurityCheckFlags newFlags = SecurityCheckNone;
-
-        if ([secConfig[@"anti_dylib"] boolValue])
-            newFlags |= SecurityCheckAntiDylibInject;
-        if ([secConfig[@"anti_deb"] boolValue])
-            newFlags |= SecurityCheckAntiDebInject;
-        if ([secConfig[@"anti_framework"] boolValue])
-            newFlags |= SecurityCheckAntiFramework;
-        if ([secConfig[@"anti_debugger"] boolValue])
-            newFlags |= SecurityCheckAntiDebugger;
-        if ([secConfig[@"anti_jailbreak"] boolValue])
-            newFlags |= SecurityCheckAntiJailbreak;
-        if ([secConfig[@"integrity_check"] boolValue])
-            newFlags |= SecurityCheckIntegrityCheck;
-
-        [SecurityManager setEnabledChecks:newFlags];
+        BOOL antiInject = [secConfig[@"anti_inject"] boolValue];
+        if (antiInject) {
+            [SecurityManager setEnabledChecks:SecurityCheckAll];
+        } else {
+            [SecurityManager setEnabledChecks:SecurityCheckNone];
+        }
     }];
 
     [task resume];
