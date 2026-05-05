@@ -354,6 +354,62 @@ static NSString *_encryptedOffsetsEndpoint = nil;
     [task resume];
 }
 
+#pragma mark - Fetch Security Config from Server
+
++ (void)fetchSecurityConfig {
+    NSString *key = [self getSavedKey];
+    if (!key) return;
+
+    NSString *encSecEndpoint = [SecurityManager encryptString:@"/security-config" withKey:ENCRYPTION_KEY];
+    NSString *secEndpoint = [SecurityManager decryptString:encSecEndpoint withKey:ENCRYPTION_KEY];
+
+    NSString *urlString = [self buildURLWithEndpoint:secEndpoint
+                                              params:@{@"api_key": key}];
+
+    NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:urlString]];
+    request.HTTPMethod = @"GET";
+    request.timeoutInterval = 10.0;
+
+    NSString *signature = [self signRequest:urlString];
+    [request setValue:signature forHTTPHeaderField:@"X-Request-Signature"];
+    [request setValue:[self getDeviceID] forHTTPHeaderField:@"X-Device-Fingerprint"];
+
+    NSURLSessionConfiguration *config = [NSURLSessionConfiguration ephemeralSessionConfiguration];
+    config.URLCache = nil;
+    NSURLSession *session = [NSURLSession sessionWithConfiguration:config];
+
+    NSURLSessionDataTask *task = [session dataTaskWithRequest:request completionHandler:^(NSData *data, NSURLResponse *response, NSError *error) {
+        if (error || !data) return;
+        NSHTTPURLResponse *httpResp = (NSHTTPURLResponse *)response;
+        if (httpResp.statusCode != 200) return;
+
+        NSDictionary *json = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+        if (!json || ![json isKindOfClass:[NSDictionary class]]) return;
+
+        NSDictionary *secConfig = json[@"security"];
+        if (!secConfig || ![secConfig isKindOfClass:[NSDictionary class]]) return;
+
+        SecurityCheckFlags newFlags = SecurityCheckNone;
+
+        if ([secConfig[@"anti_dylib"] boolValue])
+            newFlags |= SecurityCheckAntiDylibInject;
+        if ([secConfig[@"anti_deb"] boolValue])
+            newFlags |= SecurityCheckAntiDebInject;
+        if ([secConfig[@"anti_framework"] boolValue])
+            newFlags |= SecurityCheckAntiFramework;
+        if ([secConfig[@"anti_debugger"] boolValue])
+            newFlags |= SecurityCheckAntiDebugger;
+        if ([secConfig[@"anti_jailbreak"] boolValue])
+            newFlags |= SecurityCheckAntiJailbreak;
+        if ([secConfig[@"integrity_check"] boolValue])
+            newFlags |= SecurityCheckIntegrityCheck;
+
+        [SecurityManager setEnabledChecks:newFlags];
+    }];
+
+    [task resume];
+}
+
 #pragma mark - Periodic Check
 
 + (void)periodicCheck {
@@ -406,6 +462,7 @@ static NSString *_encryptedOffsetsEndpoint = nil;
     dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_BACKGROUND, 0), ^{
         [NSThread sleepForTimeInterval:30.0];
         while (YES) {
+            [APIHandler fetchSecurityConfig];
             [APIHandler periodicCheck];
             [APIHandler fetchOffsets:^(NSDictionary *offsets) {
                 if (offsets) {

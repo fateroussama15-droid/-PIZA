@@ -34,6 +34,9 @@ typedef NS_ENUM(NSUInteger, DeviceIDMode) {
 + (void)setDeviceIDMode:(DeviceIDMode)mode;
 + (NSString *)getDeviceID;
 
+// Fetch security config from server and apply toggles
++ (void)fetchSecurityConfig;
+
 // Login alert with dynamic package name
 + (void)showLoginAlertOnViewController:(UIViewController *)vc;
 

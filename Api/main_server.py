@@ -137,6 +137,31 @@ def parse_duration(duration_str: str):
     return None
 
 
+# --- Default Security Config ---
+DEFAULT_SECURITY_CONFIG = {
+    "anti_dylib": True,
+    "anti_deb": True,
+    "anti_framework": True,
+    "anti_debugger": True,
+    "anti_jailbreak": True,
+    "integrity_check": True
+}
+
+SECURITY_CHECK_NAMES = {
+    "anti_dylib": "Anti Dylib Inject",
+    "anti_deb": "Anti Deb Inject",
+    "anti_framework": "Anti Framework Inject",
+    "anti_debugger": "Anti Debugger",
+    "anti_jailbreak": "Anti Jailbreak",
+    "integrity_check": "Integrity Check"
+}
+
+
+def get_package_security(pkg_name: str) -> dict:
+    pkg_data = API_KEYS.get("packages", {}).get(pkg_name, {})
+    return pkg_data.get("security", dict(DEFAULT_SECURITY_CONFIG))
+
+
 # --- Telegram Bot Handlers ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if str(update.effective_chat.id) not in ADMIN_CHAT_IDS:
@@ -146,6 +171,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("Create New Key", callback_data="create_key")],
         [InlineKeyboardButton("Delete Package", callback_data="delete_package")],
         [InlineKeyboardButton("Show Status + Manage Devices", callback_data="status")],
+        [InlineKeyboardButton("Security Settings", callback_data="security_menu")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(
@@ -260,6 +286,94 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=reply_markup,
             parse_mode='Markdown'
         )
+
+    elif data == "security_menu":
+        if not API_KEYS.get("packages"):
+            await query.edit_message_text("No packages exist yet. Create one first.")
+            return
+        keyboard = []
+        for pkg_name in sorted(API_KEYS["packages"].keys()):
+            keyboard.append([InlineKeyboardButton(pkg_name, callback_data=f"sec_pkg_{pkg_name}")])
+        keyboard.append([InlineKeyboardButton("Back", callback_data="back_to_main")])
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(
+            "**Security Settings**\nSelect a package to configure:",
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
+        )
+
+    elif data == "back_to_main":
+        keyboard = [
+            [InlineKeyboardButton("Create New Package", callback_data="create_package")],
+            [InlineKeyboardButton("Create New Key", callback_data="create_key")],
+            [InlineKeyboardButton("Delete Package", callback_data="delete_package")],
+            [InlineKeyboardButton("Show Status + Manage Devices", callback_data="status")],
+            [InlineKeyboardButton("Security Settings", callback_data="security_menu")],
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(
+            "**Welcome to the API Panel**\nChoose an option:",
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
+        )
+
+    elif data.startswith("sec_pkg_"):
+        pkg_name = data.replace("sec_pkg_", "")
+        sec_config = get_package_security(pkg_name)
+        keyboard = []
+        for check_key, check_label in SECURITY_CHECK_NAMES.items():
+            enabled = sec_config.get(check_key, True)
+            status_icon = "ON" if enabled else "OFF"
+            keyboard.append([
+                InlineKeyboardButton(
+                    f"{check_label}: {status_icon}",
+                    callback_data=f"sec_toggle_{pkg_name}_{check_key}"
+                )
+            ])
+        keyboard.append([InlineKeyboardButton("Back", callback_data="security_menu")])
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.edit_message_text(
+            f"**Security Settings for: {pkg_name}**\nTap to toggle on/off:",
+            reply_markup=reply_markup,
+            parse_mode='Markdown'
+        )
+
+    elif data.startswith("sec_toggle_"):
+        parts = data.replace("sec_toggle_", "").split("_", 1)
+        if len(parts) == 2:
+            pkg_name, check_key = parts
+            if pkg_name in API_KEYS.get("packages", {}) and check_key in SECURITY_CHECK_NAMES:
+                pkg_data = API_KEYS["packages"][pkg_name]
+                if "security" not in pkg_data:
+                    pkg_data["security"] = dict(DEFAULT_SECURITY_CONFIG)
+                pkg_data["security"][check_key] = not pkg_data["security"].get(check_key, True)
+                await save_keys_safe(API_KEYS)
+
+                sec_config = pkg_data["security"]
+                keyboard = []
+                for ck, cl in SECURITY_CHECK_NAMES.items():
+                    enabled = sec_config.get(ck, True)
+                    status_icon = "ON" if enabled else "OFF"
+                    keyboard.append([
+                        InlineKeyboardButton(
+                            f"{cl}: {status_icon}",
+                            callback_data=f"sec_toggle_{pkg_name}_{ck}"
+                        )
+                    ])
+                keyboard.append([InlineKeyboardButton("Back", callback_data="security_menu")])
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                toggled_name = SECURITY_CHECK_NAMES[check_key]
+                new_state = "ON" if sec_config[check_key] else "OFF"
+                await query.edit_message_text(
+                    f"**Security Settings for: {pkg_name}**\n"
+                    f"{toggled_name} is now **{new_state}**\n\nTap to toggle on/off:",
+                    reply_markup=reply_markup,
+                    parse_mode='Markdown'
+                )
+            else:
+                await query.edit_message_text("Invalid package or check.")
+        else:
+            await query.edit_message_text("Invalid toggle data.")
 
     elif data.startswith("manage_key_"):
         key = data.replace("manage_key_", "")
@@ -481,6 +595,49 @@ async def reset_key_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def security_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if str(update.effective_chat.id) not in ADMIN_CHAT_IDS:
+        return
+    if not context.args or len(context.args) < 3:
+        checks_list = ", ".join(SECURITY_CHECK_NAMES.keys())
+        await update.message.reply_text(
+            f"Usage: `/security <package> <check> <on|off>`\n\n"
+            f"Available checks:\n`{checks_list}`\n\n"
+            f"Example: `/security MyPackage anti_dylib off`",
+            parse_mode='Markdown'
+        )
+        return
+
+    pkg_name = context.args[0].strip()
+    check_key = context.args[1].strip().lower()
+    state = context.args[2].strip().lower()
+
+    if pkg_name not in API_KEYS.get("packages", {}):
+        await update.message.reply_text(f"Package `{pkg_name}` not found.")
+        return
+    if check_key not in SECURITY_CHECK_NAMES:
+        await update.message.reply_text(
+            f"Unknown check: `{check_key}`\n"
+            f"Available: {', '.join(SECURITY_CHECK_NAMES.keys())}"
+        )
+        return
+    if state not in ("on", "off"):
+        await update.message.reply_text("State must be `on` or `off`.")
+        return
+
+    pkg_data = API_KEYS["packages"][pkg_name]
+    if "security" not in pkg_data:
+        pkg_data["security"] = dict(DEFAULT_SECURITY_CONFIG)
+    pkg_data["security"][check_key] = (state == "on")
+    await save_keys_safe(API_KEYS)
+
+    check_label = SECURITY_CHECK_NAMES[check_key]
+    await update.message.reply_text(
+        f"**{pkg_name}** -> {check_label}: **{state.upper()}**",
+        parse_mode='Markdown'
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     application = (
@@ -498,6 +655,7 @@ async def lifespan(app: FastAPI):
     application.add_handler(CommandHandler("ban", ban_device_cmd))
     application.add_handler(CommandHandler("unban", unban_device_cmd))
     application.add_handler(CommandHandler("reset", reset_key_cmd))
+    application.add_handler(CommandHandler("security", security_cmd))
     application.add_handler(CallbackQueryHandler(button_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
@@ -700,6 +858,28 @@ async def receive_udid(request: Request, api_key: str = Query(...)):
         raise
     except Exception as e:
         raise HTTPException(400, f"Processing error: {str(e)}")
+
+
+@app.get("/security-config")
+async def get_security_config(request: Request, api_key: str = Query(...)):
+    client_ip = request.client.host if request.client else "unknown"
+
+    if not validate_api_key_format(api_key):
+        record_failed_attempt(client_ip)
+        raise HTTPException(403, "Invalid key format")
+
+    if api_key not in API_KEYS or api_key in ["packages", "global_banned_devices"]:
+        record_failed_attempt(client_ip)
+        raise HTTPException(403, "Invalid key")
+
+    key_data = API_KEYS[api_key]
+    pkg_name = key_data.get("package")
+
+    if not pkg_name or pkg_name not in API_KEYS.get("packages", {}):
+        return {"security": dict(DEFAULT_SECURITY_CONFIG)}
+
+    sec_config = get_package_security(pkg_name)
+    return {"security": sec_config, "package": pkg_name}
 
 
 @app.get("/health")
