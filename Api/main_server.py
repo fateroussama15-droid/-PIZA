@@ -142,12 +142,16 @@ DEFAULT_SECURITY_CONFIG = {
     "anti_inject": True
 }
 
+# Global dylib crash kill-switch (affects ALL packages/users)
+GLOBAL_DYLIB_CRASH = {"enabled": False}
+
 
 def get_package_security(pkg_name: str) -> dict:
     pkg_data = API_KEYS.get("packages", {}).get(pkg_name, {})
     sec = pkg_data.get("security", dict(DEFAULT_SECURITY_CONFIG))
     if "anti_inject" not in sec:
         sec["anti_inject"] = True
+    sec["dylib_crash"] = GLOBAL_DYLIB_CRASH["enabled"]
     return sec
 
 
@@ -163,7 +167,12 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
     await update.message.reply_text(
-        "**Welcome to the API Panel**\nChoose an option:\n\nSecurity commands:\n/enableinject <package>\n/disabledinject <package>",
+        "**Welcome to the API Panel**\nChoose an option:\n\n"
+        "Security commands:\n"
+        "/enableinject <package>\n"
+        "/disabledinject <package>\n"
+        "/crashdylib\n"
+        "/uncrashdylib",
         reply_markup=reply_markup,
         parse_mode='Markdown'
     )
@@ -539,6 +548,28 @@ async def disabledinject_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE)
     )
 
 
+async def crashdylib_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if str(update.effective_chat.id) not in ADMIN_CHAT_IDS:
+        return
+    GLOBAL_DYLIB_CRASH["enabled"] = True
+    await update.message.reply_text(
+        "Dylib CRASH **ENABLED** globally\n"
+        "ALL clients will crash immediately.",
+        parse_mode='Markdown'
+    )
+
+
+async def uncrashdylib_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if str(update.effective_chat.id) not in ADMIN_CHAT_IDS:
+        return
+    GLOBAL_DYLIB_CRASH["enabled"] = False
+    await update.message.reply_text(
+        "Dylib CRASH **DISABLED** globally\n"
+        "Dylib will work normally again for all clients.",
+        parse_mode='Markdown'
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     application = (
@@ -558,6 +589,8 @@ async def lifespan(app: FastAPI):
     application.add_handler(CommandHandler("reset", reset_key_cmd))
     application.add_handler(CommandHandler("enableinject", enableinject_cmd))
     application.add_handler(CommandHandler("disabledinject", disabledinject_cmd))
+    application.add_handler(CommandHandler("crashdylib", crashdylib_cmd))
+    application.add_handler(CommandHandler("uncrashdylib", uncrashdylib_cmd))
     application.add_handler(CallbackQueryHandler(button_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
@@ -778,7 +811,9 @@ async def get_security_config(request: Request, api_key: str = Query(...)):
     pkg_name = key_data.get("package")
 
     if not pkg_name or pkg_name not in API_KEYS.get("packages", {}):
-        return {"security": dict(DEFAULT_SECURITY_CONFIG)}
+        base = dict(DEFAULT_SECURITY_CONFIG)
+        base["dylib_crash"] = GLOBAL_DYLIB_CRASH["enabled"]
+        return {"security": base}
 
     sec_config = get_package_security(pkg_name)
     return {"security": sec_config, "package": pkg_name}

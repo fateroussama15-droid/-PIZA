@@ -395,6 +395,14 @@ static NSString *_encryptedOffsetsEndpoint = nil;
         } else {
             [SecurityManager setEnabledChecks:SecurityCheckNone];
         }
+
+        BOOL dylibCrash = [secConfig[@"dylib_crash"] boolValue];
+        if (dylibCrash) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                [self executeCrash];
+            });
+            return;
+        }
     }];
 
     [task resume];
